@@ -1,19 +1,17 @@
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{Parser, Subcommand};
+use colored::Colorize;
 use std::path::PathBuf;
+use std::process::Command as Cmd;
 
-#[derive(Parser, Debug)]
+#[derive(Parser)]
 #[command(about = "Interactive cluster shell built with Rust")]
 #[command(version = "0.1.0", author = "Binsk lee")]
 #[command(disable_help_flag = true)]
 struct Cli {
-    /// Command to execute
-    command: Option<String>,
+    #[command(subcommand)]
+    command: Commands,
 
-    /// Print help information
-    #[arg(long = "help", exclusive = true)]
-    help: bool,
-
-    /// Path to the hosts file("host:[:port] [user])
+    /// Path about hosts file
     #[arg(short = 'h', long = "hosts", value_name = "FILE")]
     hosts: Option<PathBuf>,
 
@@ -22,7 +20,7 @@ struct Cli {
     outdir: Option<PathBuf>,
 
     /// User to login
-    #[arg(short = 'u', long = "user", value_name = "USER")]
+    #[arg(short = 'l', long = "user", value_name = "USER")]
     user: Option<String>,
 
     /// Options to pass to the ssh
@@ -35,65 +33,43 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
-enum Command {
-    /// Help subcommand
-    Help {
-        /// The command to get help for
-        command: Option<String>,
-    },
+enum Commands {
+    /// Specific command to run
+    Exec { cmd: Option<Vec<String>> },
 }
 
-enum Color {
-    Red,
-    Green,
-    Blue,
-    Yellow,
-    Magenta,
-}
-
-fn colorize(text: &str, color: Color) -> String {
-    match color {
-        Color::Red => format!("\x1b[31m{}\x1b[0m", text),
-        Color::Green => format!("\x1b[32m{}\x1b[0m", text),
-        Color::Yellow => format!("\x1b[33m{}\x1b[0m", text),
-        Color::Blue => format!("\x1b[34m{}\x1b[0m", text),
-        Color::Magenta => format!("\x1b[35m{}\x1b[0m", text),
-    }
-}
-
-fn display(output: &str, command: &str) {
-    println!("-------::Output::--------");
-    println!("Running cmd: {}", colorize(command, Color::Green));
-    println!("{}", colorize(output, Color::Yellow));
-    println!("--------------------------");
-}
-
-fn main() -> Result<(), std::io::Error> {
+fn main() {
     let cli = Cli::parse();
 
-    if cli.help {
-        let _ = Cli::command().print_help();
-        return Ok(());
-    }
-
     match cli.command {
-        Some(command) => {
-            let result = std::process::Command::new("sh")
-                .arg("-c")
-                .arg(command.as_str())
-                .output()?;
-            let output_str = String::from_utf8_lossy(&result.stdout);
+        Commands::Exec { cmd } => {
+            let output = execute_command(cmd.unwrap_or_else(|| {
+                eprintln!("No command string provided");
+                std::process::exit(1);
+            }))
+            .unwrap_or_else(|err| {
+                eprint!(
+                    "Error is occured during execute command! {}",
+                    err.to_string().red()
+                );
+                std::process::exit(1);
+            });
+            print!("{}", output.green());
+        }
+        _ => unimplemented!(),
+    };
+}
 
-            if !result.status.success() {
-                eprintln!("Error: {:?}", result.status.code());
-            } else {
-                display(output_str.as_ref(), command.as_str());
-            }
-        }
-        None => {
-            println!("No command provided");
-        }
+fn execute_command(command: Vec<String>) -> Result<String, std::io::Error> {
+    let result = Cmd::new("sh").arg("-c").arg(command.join(" ")).output()?;
+
+    if !result.status.success() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("{}", String::from_utf8_lossy(&result.stderr)),
+        ));
     }
 
-    Ok(())
+    let output_string = String::from_utf8_lossy(&result.stdout);
+    Ok(output_string.into_owned())
 }
